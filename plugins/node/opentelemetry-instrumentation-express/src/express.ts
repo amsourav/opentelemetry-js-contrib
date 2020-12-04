@@ -14,11 +14,10 @@
  * limitations under the License.
  */
 
-import { BasePlugin, hrTime } from '@opentelemetry/core';
+import { hrTime } from '@opentelemetry/core';
 import { Attributes } from '@opentelemetry/api';
 import * as express from 'express';
 import * as core from 'express-serve-static-core';
-import * as shimmer from 'shimmer';
 import {
   ExpressLayer,
   ExpressRouter,
@@ -27,11 +26,16 @@ import {
   Parameters,
   PathParams,
   _LAYERS_STORE_PROPERTY,
-  ExpressPluginConfig,
+  ExpressInstrumentationConfig,
   ExpressLayerType,
 } from './types';
 import { getLayerMetadata, storeLayerPath, isLayerIgnored } from './utils';
 import { VERSION } from './version';
+import {
+  isWrapped,
+  InstrumentationBase,
+  InstrumentationNodeModuleDefinition,
+} from '@opentelemetry/instrumentation';
 
 /**
  * This symbol is used to mark express layer as being already instrumented
@@ -40,50 +44,78 @@ import { VERSION } from './version';
 export const kLayerPatched: unique symbol = Symbol('express-layer-patched');
 
 /** Express instrumentation plugin for OpenTelemetry */
-export class ExpressPlugin extends BasePlugin<typeof express> {
+export class ExpressInstrumentation extends InstrumentationBase<
+  typeof express
+> {
   static readonly component = 'express';
-  readonly supportedVersions = ['^4.0.0'];
-  protected _config!: ExpressPluginConfig;
 
-  constructor(readonly moduleName: string) {
-    super('@opentelemetry/plugin-express', VERSION);
+  constructor(config: ExpressInstrumentationConfig = {}) {
+    super(
+      '@opentelemetry/instrumentation-express',
+      VERSION,
+      Object.assign({}, config)
+    );
+  }
+
+  setConfig(config: ExpressInstrumentationConfig = {}) {
+    this._config = Object.assign({}, config);
+  }
+
+  protected init() {
+    return new InstrumentationNodeModuleDefinition<typeof express>(
+      'express',
+      ['^4.0.0'],
+      this.patch.bind(this),
+      this.unpatch.bind(this)
+    );
   }
 
   /**
    * Patches Express operations.
    */
-  protected patch() {
+  protected patch(moduleExports: typeof express) {
     this._logger.debug('Patching Express');
 
-    if (this._moduleExports === undefined || this._moduleExports === null) {
-      return this._moduleExports;
+    if (moduleExports === undefined || moduleExports === null) {
+      return moduleExports;
     }
-    const routerProto = (this._moduleExports
-      .Router as unknown) as express.Router;
+    const routerProto = (moduleExports.Router as unknown) as express.Router;
+
+    if (isWrapped(routerProto.route)) {
+      this._unwrap(routerProto, 'route');
+    }
 
     this._logger.debug('patching express.Router.prototype.route');
-    shimmer.wrap(routerProto, 'route', this._getRoutePatch.bind(this));
+    this._wrap(routerProto, 'route', this._getRoutePatch.bind(this));
+
+    if (isWrapped(routerProto.use)) {
+      this._unwrap(routerProto, 'use');
+    }
 
     this._logger.debug('patching express.Router.prototype.use');
-    shimmer.wrap(routerProto, 'use', this._getRouterUsePatch.bind(this));
+    this._wrap(routerProto, 'use', this._getRouterUsePatch.bind(this));
+
+    if (isWrapped(moduleExports.application.use)) {
+      this._unwrap(moduleExports.application, 'use');
+    }
 
     this._logger.debug('patching express.Application.use');
-    shimmer.wrap(
-      this._moduleExports.application,
+    this._wrap(
+      moduleExports.application,
       'use',
       this._getAppUsePatch.bind(this)
     );
 
-    return this._moduleExports;
+    return moduleExports;
   }
 
   /** Unpatches all Express patched functions. */
-  unpatch(): void {
-    const routerProto = (this._moduleExports
-      .Router as unknown) as express.Router;
-    shimmer.unwrap(routerProto, 'use');
-    shimmer.unwrap(routerProto, 'route');
-    shimmer.unwrap(this._moduleExports.application, 'use');
+  protected unpatch(moduleExports: typeof express): void {
+    if (moduleExports === undefined) return;
+    const routerProto = (moduleExports.Router as unknown) as express.Router;
+    this._unwrap(routerProto, 'use');
+    this._unwrap(routerProto, 'route');
+    this._unwrap(moduleExports.application, 'use');
   }
 
   /**
@@ -159,7 +191,7 @@ export class ExpressPlugin extends BasePlugin<typeof express> {
     if (layer[kLayerPatched] === true) return;
     layer[kLayerPatched] = true;
     this._logger.debug('patching express.Router.Layer.handle');
-    shimmer.wrap(layer, 'handle', (original: Function) => {
+    this._wrap(layer, 'handle', (original: Function) => {
       if (original.length === 4) return original;
 
       return function (
@@ -173,7 +205,7 @@ export class ExpressPlugin extends BasePlugin<typeof express> {
           .filter(path => path !== '/')
           .join('');
         const attributes: Attributes = {
-          [AttributeNames.COMPONENT]: ExpressPlugin.component,
+          [AttributeNames.COMPONENT]: ExpressInstrumentation.component,
           [AttributeNames.HTTP_ROUTE]: route.length > 0 ? route : undefined,
         };
         const metadata = getLayerMetadata(layer, layerPath);
@@ -184,7 +216,7 @@ export class ExpressPlugin extends BasePlugin<typeof express> {
         if (isLayerIgnored(metadata.name, type, plugin._config)) {
           return original.apply(this, arguments);
         }
-        if (plugin._tracer.getCurrentSpan() === undefined) {
+        if (plugin.tracer.getCurrentSpan() === undefined) {
           return original.apply(this, arguments);
         }
         // Rename the root http span once we reach the request handler
@@ -192,12 +224,12 @@ export class ExpressPlugin extends BasePlugin<typeof express> {
           metadata.attributes[AttributeNames.EXPRESS_TYPE] ===
           ExpressLayerType.REQUEST_HANDLER
         ) {
-          const parent = plugin._tracer.getCurrentSpan();
+          const parent = plugin.tracer.getCurrentSpan();
           if (parent) {
             parent.updateName(`${req.method} ${route}`);
           }
         }
-        const span = plugin._tracer.startSpan(metadata.name, {
+        const span = plugin.tracer.startSpan(metadata.name, {
           attributes: Object.assign(attributes, metadata.attributes),
         });
         const startTime = hrTime();
@@ -232,7 +264,7 @@ export class ExpressPlugin extends BasePlugin<typeof express> {
               (req[_LAYERS_STORE_PROPERTY] as string[]).pop();
             }
             const callback = args[callbackIdx] as Function;
-            return plugin._tracer.bind(callback).apply(this, arguments);
+            return plugin.tracer.bind(callback).apply(this, arguments);
           };
         }
         const result = original.apply(this, arguments);
@@ -248,5 +280,3 @@ export class ExpressPlugin extends BasePlugin<typeof express> {
     });
   }
 }
-
-export const plugin = new ExpressPlugin(ExpressPlugin.component);

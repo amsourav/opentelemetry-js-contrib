@@ -16,7 +16,8 @@
 
 import { kLayerPatched } from './express';
 import { Request } from 'express';
-import { PluginConfig, Attributes } from '@opentelemetry/api';
+import { Attributes } from '@opentelemetry/api';
+import { InstrumentationConfig } from '@opentelemetry/instrumentation';
 
 /**
  * This const define where on the `request` object the plugin will mount the
@@ -86,7 +87,7 @@ export type IgnoreMatcher = string | RegExp | ((name: string) => boolean);
 /**
  * Options available for the Express Plugin (see [documentation](https://github.com/open-telemetry/opentelemetry-js/tree/master/packages/opentelemetry-plugin-express#express-plugin-options))
  */
-export interface ExpressPluginConfig extends PluginConfig {
+export interface ExpressInstrumentationConfig extends InstrumentationConfig {
   /** Ignore specific based on their name */
   ignoreLayers?: IgnoreMatcher[];
   /** Ignore specific layers based on their type */
