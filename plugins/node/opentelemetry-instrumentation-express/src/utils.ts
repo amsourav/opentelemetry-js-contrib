@@ -22,7 +22,7 @@ import {
   _LAYERS_STORE_PROPERTY,
   ExpressLayerType,
   IgnoreMatcher,
-  ExpressPluginConfig,
+  ExpressInstrumentationConfig,
 } from './types';
 
 /**
@@ -112,7 +112,7 @@ const satisfiesPattern = <T>(
 export const isLayerIgnored = (
   name: string,
   type: ExpressLayerType,
-  config?: ExpressPluginConfig
+  config?: ExpressInstrumentationConfig
 ): boolean => {
   if (
     Array.isArray(config?.ignoreLayersType) &&

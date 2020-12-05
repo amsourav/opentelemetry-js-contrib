@@ -15,23 +15,37 @@
  */
 
 import { context } from '@opentelemetry/api';
-import { NoopLogger } from '@opentelemetry/core';
 import { NodeTracerProvider } from '@opentelemetry/node';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 import {
+  ConsoleSpanExporter,
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/tracing';
+
+import { ExpressInstrumentation } from '../src';
+import {
+  AttributeNames,
+  ExpressLayerType,
+  ExpressInstrumentationConfig,
+} from '../src/types';
+
+const provider = new NodeTracerProvider({});
+const memoryExporter = new InMemorySpanExporter();
+const spanProcessor = new SimpleSpanProcessor(memoryExporter);
+provider.addSpanProcessor(spanProcessor);
+provider.addSpanProcessor(new SimpleSpanProcessor(new ConsoleSpanExporter()));
+const tracer = provider.getTracer('default');
+
+const instrumentation = new ExpressInstrumentation();
+instrumentation.setTracerProvider(provider);
+instrumentation.enable();
+instrumentation.disable();
+
 import * as assert from 'assert';
 import * as express from 'express';
 import * as http from 'http';
 import { AddressInfo } from 'net';
-import { plugin } from '../src';
-import {
-  AttributeNames,
-  ExpressLayerType,
-  ExpressPluginConfig,
-} from '../src/types';
 
 const httpRequest = {
   get: (options: http.ClientRequestArgs | string) => {
@@ -52,17 +66,11 @@ const httpRequest = {
   },
 };
 
-describe('Express Plugin', () => {
-  const logger = new NoopLogger();
-  const provider = new NodeTracerProvider();
-  const memoryExporter = new InMemorySpanExporter();
-  const spanProcessor = new SimpleSpanProcessor(memoryExporter);
-  provider.addSpanProcessor(spanProcessor);
-  const tracer = provider.getTracer('default');
+describe('Express Instrumentation', () => {
   let contextManager: AsyncHooksContextManager;
 
   before(() => {
-    plugin.enable(express, provider, logger);
+    instrumentation.enable();
   });
 
   beforeEach(() => {
@@ -165,11 +173,12 @@ describe('Express Plugin', () => {
 
   describe('Instrumenting with specific config', () => {
     it('should ignore specific middlewares based on config', async () => {
-      plugin.disable();
-      const config: ExpressPluginConfig = {
+      instrumentation.disable();
+      const config: ExpressInstrumentationConfig = {
         ignoreLayersType: [ExpressLayerType.MIDDLEWARE],
       };
-      plugin.enable(express, provider, logger, config);
+      instrumentation.setConfig(config);
+      instrumentation.enable();
       const rootSpan = tracer.startSpan('rootSpan');
       const app = express();
       app.use(express.json());
@@ -206,9 +215,9 @@ describe('Express Plugin', () => {
     });
   });
 
-  describe('Disabling plugin', () => {
+  describe('Disabling instrumentation', () => {
     it('should not create new spans', async () => {
-      plugin.disable();
+      instrumentation.disable();
       const rootSpan = tracer.startSpan('rootSpan');
       const app = express();
       app.use(express.json());

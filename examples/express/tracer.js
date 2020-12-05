@@ -10,18 +10,7 @@ const EXPORTER = process.env.EXPORTER || '';
 
 
 module.exports = (serviceName) => {
-  const provider = new NodeTracerProvider({
-    plugins: {
-      express: {
-        enabled: true,
-        path: '@opentelemetry/plugin-express',
-      },
-      http: {
-        enabled: true,
-        path: '@opentelemetry/plugin-http',
-      },
-    },
-  });
+  const provider = new NodeTracerProvider();
 
   let exporter;
   if (EXPORTER.toLowerCase().startsWith('z')) {

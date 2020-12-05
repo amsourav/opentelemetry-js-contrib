@@ -18,7 +18,7 @@ import * as utils from '../src/utils';
 import * as assert from 'assert';
 import {
   ExpressLayerType,
-  ExpressPluginConfig,
+  ExpressInstrumentationConfig,
   ExpressLayer,
   AttributeNames,
 } from '../src/types';
@@ -33,19 +33,19 @@ describe('Utils', () => {
         utils.isLayerIgnored(
           '',
           ExpressLayerType.MIDDLEWARE,
-          {} as ExpressPluginConfig
+          {} as ExpressInstrumentationConfig
         )
       );
       assert.doesNotThrow(() =>
         utils.isLayerIgnored('', ExpressLayerType.MIDDLEWARE, {
           ignoreLayersType: {},
-        } as ExpressPluginConfig)
+        } as ExpressInstrumentationConfig)
       );
       assert.doesNotThrow(() =>
         utils.isLayerIgnored('', ExpressLayerType.MIDDLEWARE, {
           ignoreLayersType: {},
           ignoreLayers: {},
-        } as ExpressPluginConfig)
+        } as ExpressInstrumentationConfig)
       );
     });
 
